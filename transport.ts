@@ -192,8 +192,8 @@ export class Transport {
     }
 
     public disconnect() {
-        this.clientEH.reset();
-        this.clientIH.reset();
+        this.clientEH.disconnect();
+        this.clientIH.disconnect();
     }
 
     public send(deviceId: string,payload: string) {
