@@ -1,11 +1,13 @@
 import {Util} from './util';
 
 declare var rhea: any;
+declare var window: any;
 
 export class Transport {
     private clientEH: any;
     private clientIH: any;
-    private connection: any;
+    private connectionEH: any;
+    private connectionIH: any;
     private connected: boolean;
     private sendable: boolean;
     private webSocketUrl: string;
@@ -20,6 +22,7 @@ export class Transport {
     private messageTimeOffset: number;
     private connectSuccessCount: number;
     public onMessage: Function;
+    public onReadyToSend: Function;
     public onConnectionLost: Function;
     
 
@@ -29,14 +32,14 @@ export class Transport {
     private optionsEH: any;
     private optionsIH: any;
 
-    constructor(eventHubEndPoint: string, iotHubConnectionString: string, messageTimeOffset: number) {
-        var matches = RegExp('sb://(.*)/').test(eventHubEndPoint);
+    constructor(eventHubEndPoint: string,eventHubName: string,eventHubConsumerGroup: string, iotHubConnectionString: string, messageTimeOffset: number = 0) {
+        var matches = RegExp('sb://(.*)/').exec(eventHubEndPoint);
         if(!matches || !matches[1]) {
             alert('invalid event hub endpoint');
             return;
         }
         this.ehHost = matches[1];
-        matches = RegExp('HostName=(.*)\\.azure-devices\\.net;SharedAccessKeyName=(.*);SharedAccessKey=(.*)').test(iotHubConnectionString);
+        matches = RegExp('HostName=(.*)\\.azure-devices\\.net;SharedAccessKeyName=(.*);SharedAccessKey=(.*)').exec(iotHubConnectionString);
         if(!matches || !matches[1]|| !matches[2]|| !matches[3]) {
             alert('invalid iot hub connection string');
             return;
@@ -78,16 +81,18 @@ export class Transport {
             "connection_details":null,
             "reconnect":false,
             "username":this.sharedAccessKeyName+'@sas.root.'+this.iHAccount,
-            "password":Util.getSASToken(this.iHAccount,this.sharedAccessKey),
+            "password":Util.getSASToken(this.iHAccount,this.sharedAccessKey,this.sharedAccessKeyName),
             "onSuccess":null,
             "onFailure":null,
         };
         this.messageTimeOffset = messageTimeOffset;
         this.connectSuccessCount = 0;
         this.sendable = false;
-
-        this.clientEH = rhea;
-        this.clientIH = rhea;
+        this.ehPath = eventHubName;
+        this.ehCG = eventHubConsumerGroup;
+        var Container = window.require('rhea');
+        this.clientEH = new Container();
+        this.clientIH = new Container();
     }
 
     public connect(success: Function, fail: Function) {
@@ -98,8 +103,8 @@ export class Transport {
             if(success && this.connectSuccessCount === 2) {
                 success();
             }
-            this.managementSender = context.connection.open_sender('$management');
-            context.connection.open_receiver('$management');
+            this.managementSender = this.connectionEH.open_sender('$management');
+            this.connectionEH.open_receiver('$management');
             this.connected = true;
         });
         this.clientEH.on('connection_error',(context) => {
@@ -129,18 +134,18 @@ export class Transport {
                 this.partitionIds = p.partition_ids;
 
                 this.partitionIds.forEach((pid) => {
-                    this.connection.open_receiver({
+                    this.connectionEH.open_receiver({
                         source: {
                             address:'/'+this.ehPath+'/ConsumerGroups/'+this.ehCG+'/Partitions/'+pid,
                             filter:this.clientEH.filter.selector("amqp.annotation.x-opt-enqueuedtimeutc > " +(new Date().getTime() + this.messageTimeOffset).toString())
                         }
                     });
                 }, this);
-            }else if (context.receiver.source.address === '$management') {
+            }else {
                 if(this.onMessage) this.onMessage(context.message.body);
             }
         });
-        this.connection = this.clientEH.connect(this.optionsEH);
+        this.connectionEH = this.clientEH.connect(this.optionsEH);
 
         var wsIH = this.clientIH.websocket_connect(WebSocket);
         this.optionsIH.connection_details = wsIH("wss://" + this.iHAccount + ".azure-devices.net:443/$servicebus/websocket", ["AMQPWSB10"]);
@@ -149,7 +154,7 @@ export class Transport {
             if(success && this.connectSuccessCount++ === 2) {
                 success();
             } 
-            this.messageSender = context.connection.open_sender('/messages/devicebound');
+            this.messageSender = this.connectionIH.open_sender('/messages/devicebound');
             this.connected = true;
         });
         this.clientIH.on('connection_error',(context) => {
@@ -162,11 +167,12 @@ export class Transport {
         });
         this.clientIH.on('sendable', (context) => {
             this.sendable = true;
+            if(context.sender.local.attach.target.value[0].value === '/messages/devicebound' && this.onReadyToSend) this.onReadyToSend();
         });
         this.clientIH.on("message", (context) => {
             console.log('onmessage called should not use!!');
         });
-        this.connection = this.clientIH.connect(this.optionsIH);
+        this.connectionIH = this.clientIH.connect(this.optionsIH);
     }
 
     public disconnect() {

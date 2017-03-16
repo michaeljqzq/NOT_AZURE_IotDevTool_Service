@@ -9413,7 +9413,7 @@ Container.prototype.filter = require('./filter.js');
 Container.prototype.types = require('./types.js');
 Container.prototype.message = require('./message.js');
 
-module.exports = new Container();
+module.exports = Container;
 
 }).call(this,require('_process'))
 },{"./connection.js":1,"./filter.js":4,"./log.js":7,"./message.js":8,"./rpc.js":9,"./sasl.js":10,"./types.js":14,"./util.js":15,"./ws.js":16,"_process":25,"events":22,"net":18,"tls":18}]},{},[]);
