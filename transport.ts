@@ -28,7 +28,7 @@ export class Transport {
     public onConnectionClose: Function;
     public ehTopics: Array<string>;
     public ihTopic: string;
-    
+    public createSuccess: boolean;
 
     private managementSender: any;
     private messageSender: any;
@@ -40,12 +40,24 @@ export class Transport {
         var matches = RegExp('sb://(.*)/').exec(eventHubEndPoint);
         if(!matches || !matches[1]) {
             alert('invalid event hub endpoint');
+            this.createSuccess = false;
             return;
         }
         this.ehHost = matches[1];
         matches = RegExp('HostName=(.*)\\.azure-devices\\.net;SharedAccessKeyName=(.*);SharedAccessKey=(.*)').exec(iotHubConnectionString);
         if(!matches || !matches[1]|| !matches[2]|| !matches[3]) {
             alert('invalid iot hub connection string');
+            this.createSuccess = false;
+            return;
+        }
+        if(!eventHubName) {
+            alert('invalid event hub name');
+            this.createSuccess = false;
+            return;
+        }
+        if(!eventHubConsumerGroup) {
+            alert('invalid event hub consumer group');
+            this.createSuccess = false;
             return;
         }
         this.iHAccount = matches[1];
@@ -100,6 +112,7 @@ export class Transport {
         var Container = window.require('rhea');
         this.clientEH = new Container();
         this.clientIH = new Container();
+        this.createSuccess = true;
     }
 
     public connect(success: Function, fail: Function) {
