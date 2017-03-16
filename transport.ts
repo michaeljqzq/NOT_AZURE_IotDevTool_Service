@@ -142,13 +142,13 @@ export class Transport {
                     });
                 }, this);
             }else {
-                if(this.onMessage) this.onMessage(context.message.body);
+                if(this.onMessage) this.onMessage(ArrayBuffer.from(context.message.body.content.data).toString());
             }
         });
         this.connectionEH = this.clientEH.connect(this.optionsEH);
 
         var wsIH = this.clientIH.websocket_connect(WebSocket);
-        this.optionsIH.connection_details = wsIH("wss://" + this.iHAccount + ".azure-devices.net:443/$servicebus/websocket", ["AMQPWSB10"]);
+        this.optionsIH.connection_details = wsIH("wss://" + this.iHAccount + ".azure-devices.net:443/$servicebus/websocket?iothub-no-client-cert=true", ["AMQPWSB10"]);
         this.clientIH.on('connection_open',(context) => {
             this.connectSuccessCount++;
             if(success && this.connectSuccessCount++ === 2) {
