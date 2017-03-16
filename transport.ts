@@ -158,7 +158,7 @@ export class Transport {
                     });
                 }, this);
             }else {
-                if(this.onMessage) this.onMessage(Util.Utf8ArrayToStr(context.message.body.content));
+                if(this.onMessage) this.onMessage(context.message.message_annotations['iothub-connection-device-id'],Util.Utf8ArrayToStr(context.message.body.content));
             }
         });
         this.connectionEH = this.clientEH.connect(this.optionsEH);
