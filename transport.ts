@@ -21,9 +21,13 @@ export class Transport {
     private partitionIds: Array<number>;
     private messageTimeOffset: number;
     private connectSuccessCount: number;
+    private remainingOpenReceiver: number;
     public onMessage: Function;
     public onReadyToSend: Function;
-    public onConnectionLost: Function;
+    public onReadyToReceive: Function;
+    public onConnectionClose: Function;
+    public ehTopics: Array<string>;
+    public ihTopic: string;
     
 
     private managementSender: any;
@@ -87,9 +91,12 @@ export class Transport {
         };
         this.messageTimeOffset = messageTimeOffset;
         this.connectSuccessCount = 0;
+        this.remainingOpenReceiver = 3;
         this.sendable = false;
         this.ehPath = eventHubName;
         this.ehCG = eventHubConsumerGroup;
+        this.ihTopic = '/messages/devicebound';
+        this.ehTopics = new Array();
         var Container = window.require('rhea');
         this.clientEH = new Container();
         this.clientIH = new Container();
@@ -103,6 +110,7 @@ export class Transport {
             if(success && this.connectSuccessCount === 2) {
                 success();
             }
+            this.ehTopics.push('$management');
             this.managementSender = this.connectionEH.open_sender('$management');
             this.connectionEH.open_receiver('$management');
             this.connected = true;
@@ -113,7 +121,7 @@ export class Transport {
         });
         this.clientEH.on('connection_close',(context) => {
             this.connected = false;
-            if(this.onConnectionLost) this.onConnectionLost();
+            if(this.onConnectionClose) this.onConnectionClose();
         });
         this.clientEH.on('sendable', (context) => {
             console.log('on sendable!!!');
@@ -126,14 +134,22 @@ export class Transport {
                 } 
             });
         });
+        this.clientEH.on('receiver_open',(context) => {
+            this.remainingOpenReceiver --;
+            if(this.remainingOpenReceiver === 0 && this.onReadyToReceive) {
+                this.onReadyToReceive();
+            }
+        });
         this.clientEH.on("message", (context) => {
             console.log('onmessage called!!');
             if(context.receiver.source.address === '$management') {
                 var p = context.message.body;
                 this.partitionCount = p.partition_count;
+                this.remainingOpenReceiver += (this.partitionCount-2);
                 this.partitionIds = p.partition_ids;
 
                 this.partitionIds.forEach((pid) => {
+                    this.ehTopics.push('/'+this.ehPath+'/ConsumerGroups/'+this.ehCG+'/Partitions/'+pid);
                     this.connectionEH.open_receiver({
                         source: {
                             address:'/'+this.ehPath+'/ConsumerGroups/'+this.ehCG+'/Partitions/'+pid,
@@ -142,7 +158,7 @@ export class Transport {
                     });
                 }, this);
             }else {
-                if(this.onMessage) this.onMessage(ArrayBuffer.from(context.message.body.content.data).toString());
+                if(this.onMessage) this.onMessage(Util.Utf8ArrayToStr(context.message.body.content));
             }
         });
         this.connectionEH = this.clientEH.connect(this.optionsEH);
@@ -151,10 +167,10 @@ export class Transport {
         this.optionsIH.connection_details = wsIH("wss://" + this.iHAccount + ".azure-devices.net:443/$servicebus/websocket?iothub-no-client-cert=true", ["AMQPWSB10"]);
         this.clientIH.on('connection_open',(context) => {
             this.connectSuccessCount++;
-            if(success && this.connectSuccessCount++ === 2) {
+            if(success && this.connectSuccessCount === 2) {
                 success();
             } 
-            this.messageSender = this.connectionIH.open_sender('/messages/devicebound');
+            this.messageSender = this.connectionIH.open_sender(this.ihTopic);
             this.connected = true;
         });
         this.clientIH.on('connection_error',(context) => {
@@ -163,11 +179,11 @@ export class Transport {
         });
         this.clientIH.on('connection_close',(context) => {
             this.connected = false;
-            if(this.onConnectionLost) this.onConnectionLost();
+            if(this.onConnectionClose) this.onConnectionClose();
         });
         this.clientIH.on('sendable', (context) => {
             this.sendable = true;
-            if(context.sender.local.attach.target.value[0].value === '/messages/devicebound' && this.onReadyToSend) this.onReadyToSend();
+            if(context.sender.local.attach.target.value[0].value === this.ihTopic && this.onReadyToSend) this.onReadyToSend();
         });
         this.clientIH.on("message", (context) => {
             console.log('onmessage called should not use!!');
@@ -176,7 +192,8 @@ export class Transport {
     }
 
     public disconnect() {
-        //this.client.disconnect(); no disconnect method?
+        this.clientEH.reset();
+        this.clientIH.reset();
     }
 
     public send(deviceId: string,payload: string) {
@@ -184,6 +201,6 @@ export class Transport {
             alert('not connected or not ready to send message');
             return false;
         }
-        this.messageSender.send({to:'/devices/'+deviceId+'/messages/devicebound',body:this.clientIH.message.data_section(Util.str2ab(payload))});
+        this.messageSender.send({to:'/devices/'+deviceId+this.ihTopic,body:this.clientIH.message.data_section(Util.str2ab(payload))});
     }
 }
