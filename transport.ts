@@ -8,7 +8,6 @@ export class Transport {
     private clientIH: any;
     private connectionEH: any;
     private connectionIH: any;
-    private connected: boolean;
     private sendable: boolean;
     private webSocketUrl: string;
     private ehPath: string;
@@ -20,12 +19,14 @@ export class Transport {
     private partitionCount: number;
     private partitionIds: Array<number>;
     private messageTimeOffset: number;
-    private connectSuccessCount: number;
     private remainingOpenReceiver: number;
+    private initializedIH: boolean;
+    private initializedEH: boolean;
     public onMessage: Function;
     public onReadyToSend: Function;
     public onReadyToReceive: Function;
-    public onConnectionClose: Function;
+    public onIHConnectionClose: Function;
+    public onEHConnectionClose: Function;
     public ehTopics: Array<string>;
     public ihTopic: string;
     public createSuccess: boolean;
@@ -36,7 +37,45 @@ export class Transport {
     private optionsEH: any;
     private optionsIH: any;
 
-    constructor(eventHubEndPoint: string,eventHubName: string,eventHubConsumerGroup: string, iotHubConnectionString: string, messageTimeOffset: number = 0) {
+    public initializeIH(iotHubConnectionString: string) {
+        var matches = RegExp('HostName=(.*)\\.azure-devices\\.net;SharedAccessKeyName=(.*);SharedAccessKey=(.*)').exec(iotHubConnectionString);
+        if(!matches || !matches[1]|| !matches[2]|| !matches[3]) {
+            alert('invalid iot hub connection string');
+            this.createSuccess = false;
+            return;
+        }
+        
+        this.iHAccount = matches[1];
+        this.sharedAccessKeyName = matches[2];
+        this.sharedAccessKey = matches[3];
+
+        this.optionsIH = {
+            "hostname" : this.iHAccount+".azure-devices.net",
+            "container_id" : "conn" + new Date().getTime(),
+            "max_frame_size" : 4294967295,
+            "channel_max" : 65535,
+            "idle_timeout" : 120000,
+            "outgoing_locales" : 'en-US',
+            "incoming_locales" : 'en-US',
+            "offered_capabilities" : null,
+            "desired_capabilities" : null,
+            "properties" : {},
+            "connection_details":null,
+            "reconnect":false,
+            "username":this.sharedAccessKeyName+'@sas.root.'+this.iHAccount,
+            "password":Util.getSASToken(this.iHAccount,this.sharedAccessKey,this.sharedAccessKeyName),
+            "onSuccess":null,
+            "onFailure":null,
+        };
+        this.sendable = false;
+        this.ihTopic = '/messages/devicebound';
+        var Container = window.require('rhea');
+        this.clientIH = new Container();
+        this.createSuccess = true;
+        this.initializedIH = true;
+    }
+
+    public initializeEH(eventHubEndPoint: string,eventHubName: string,eventHubConsumerGroup: string, messageTimeOffset: number = 0) {
         var matches = RegExp('sb://(.*)/').exec(eventHubEndPoint);
         if(!matches || !matches[1]) {
             alert('invalid event hub endpoint');
@@ -44,12 +83,7 @@ export class Transport {
             return;
         }
         this.ehHost = matches[1];
-        matches = RegExp('HostName=(.*)\\.azure-devices\\.net;SharedAccessKeyName=(.*);SharedAccessKey=(.*)').exec(iotHubConnectionString);
-        if(!matches || !matches[1]|| !matches[2]|| !matches[3]) {
-            alert('invalid iot hub connection string');
-            this.createSuccess = false;
-            return;
-        }
+        
         if(!eventHubName) {
             alert('invalid event hub name');
             this.createSuccess = false;
@@ -60,9 +94,6 @@ export class Transport {
             this.createSuccess = false;
             return;
         }
-        this.iHAccount = matches[1];
-        this.sharedAccessKeyName = matches[2];
-        this.sharedAccessKey = matches[3];
 
         this.optionsEH = {
             "hostname" : this.ehHost,
@@ -83,58 +114,66 @@ export class Transport {
             "onFailure":null,
         };
 
-        this.optionsIH = {
-            "hostname" : this.iHAccount+".azure-devices.net",
-            "container_id" : "conn" + new Date().getTime(),
-            "max_frame_size" : 4294967295,
-            "channel_max" : 65535,
-            "idle_timeout" : 120000,
-            "outgoing_locales" : 'en-US',
-            "incoming_locales" : 'en-US',
-            "offered_capabilities" : null,
-            "desired_capabilities" : null,
-            "properties" : {},
-            "connection_details":null,
-            "reconnect":false,
-            "username":this.sharedAccessKeyName+'@sas.root.'+this.iHAccount,
-            "password":Util.getSASToken(this.iHAccount,this.sharedAccessKey,this.sharedAccessKeyName),
-            "onSuccess":null,
-            "onFailure":null,
-        };
         this.messageTimeOffset = messageTimeOffset;
-        this.connectSuccessCount = 0;
         this.remainingOpenReceiver = 3;
-        this.sendable = false;
         this.ehPath = eventHubName;
         this.ehCG = eventHubConsumerGroup;
-        this.ihTopic = '/messages/devicebound';
         this.ehTopics = new Array();
         var Container = window.require('rhea');
         this.clientEH = new Container();
-        this.clientIH = new Container();
         this.createSuccess = true;
+        this.initializedEH = true;
     }
 
-    public connect(success: Function, fail: Function) {
+    public connectIH(success: Function, fail: Function) {
+        if(!this.initializedIH) {
+            console.log('not initialized');
+            return;
+        }
+        var wsIH = this.clientIH.websocket_connect(WebSocket);
+        this.optionsIH.connection_details = wsIH("wss://" + this.iHAccount + ".azure-devices.net:443/$servicebus/websocket?iothub-no-client-cert=true", ["AMQPWSB10"]);
+        this.clientIH.on('connection_open',(context) => {
+            if(success) {
+                success();
+            } 
+            this.messageSender = this.connectionIH.open_sender(this.ihTopic);
+        });
+        this.clientIH.on('connection_error',(context) => {
+            if(fail) fail();
+        });
+        this.clientIH.on('connection_close',(context) => {
+            if(this.onIHConnectionClose) this.onIHConnectionClose();
+        });
+        this.clientIH.on('sendable', (context) => {
+            this.sendable = true;
+            if(context.sender.local.attach.target.value[0].value === this.ihTopic && this.onReadyToSend) this.onReadyToSend();
+        });
+        this.clientIH.on("message", (context) => {
+            console.log('onmessage called should not use!!');
+        });
+        this.connectionIH = this.clientIH.connect(this.optionsIH);
+    }
+
+    public connectEH(success: Function, fail: Function) {
+        if(!this.initializedEH) {
+            console.log('not initialized');
+            return;
+        }
         var wsEH = this.clientEH.websocket_connect(WebSocket);
         this.optionsEH.connection_details = wsEH("wss://" + this.ehHost + ":443/$servicebus/websocket", ["AMQPWSB10"]);
         this.clientEH.on('connection_open',(context) => {
-            this.connectSuccessCount++;
-            if(success && this.connectSuccessCount === 2) {
+            if(success) {
                 success();
             }
             this.ehTopics.push('$management');
             this.managementSender = this.connectionEH.open_sender('$management');
             this.connectionEH.open_receiver('$management');
-            this.connected = true;
         });
         this.clientEH.on('connection_error',(context) => {
             if(fail) fail();
-            this.connected = false;
         });
         this.clientEH.on('connection_close',(context) => {
-            this.connected = false;
-            if(this.onConnectionClose) this.onConnectionClose();
+            if(this.onEHConnectionClose) this.onEHConnectionClose();
         });
         this.clientEH.on('sendable', (context) => {
             console.log('on sendable!!!');
@@ -175,44 +214,19 @@ export class Transport {
             }
         });
         this.connectionEH = this.clientEH.connect(this.optionsEH);
-
-        var wsIH = this.clientIH.websocket_connect(WebSocket);
-        this.optionsIH.connection_details = wsIH("wss://" + this.iHAccount + ".azure-devices.net:443/$servicebus/websocket?iothub-no-client-cert=true", ["AMQPWSB10"]);
-        this.clientIH.on('connection_open',(context) => {
-            this.connectSuccessCount++;
-            if(success && this.connectSuccessCount === 2) {
-                success();
-            } 
-            this.messageSender = this.connectionIH.open_sender(this.ihTopic);
-            this.connected = true;
-        });
-        this.clientIH.on('connection_error',(context) => {
-            if(fail) fail();
-            this.connected = false;
-        });
-        this.clientIH.on('connection_close',(context) => {
-            this.connected = false;
-            if(this.onConnectionClose) this.onConnectionClose();
-        });
-        this.clientIH.on('sendable', (context) => {
-            this.sendable = true;
-            if(context.sender.local.attach.target.value[0].value === this.ihTopic && this.onReadyToSend) this.onReadyToSend();
-        });
-        this.clientIH.on("message", (context) => {
-            console.log('onmessage called should not use!!');
-        });
-        this.connectionIH = this.clientIH.connect(this.optionsIH);
     }
 
-    public disconnect() {
-        this.clientEH.disconnect();
+    public disconnectIH() {
         this.clientIH.disconnect();
-        this.connected = false;
+    }
+
+    public disconnectEH() {
+        this.clientEH.disconnect();
     }
 
     public send(deviceId: string,payload: string) {
-        if (!this.connected || !this.sendable) {
-            alert('not connected or not ready to send message');
+        if (!this.sendable) {
+            alert('not ready to send message');
             return false;
         }
         this.messageSender.send({to:'/devices/'+deviceId+this.ihTopic,body:this.clientIH.message.data_section(Util.str2ab(payload))});
