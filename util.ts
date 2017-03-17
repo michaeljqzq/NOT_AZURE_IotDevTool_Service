@@ -1,4 +1,5 @@
 declare var CryptoJS: any;
+declare var jQuery: any;
 
 export class Util {
     static str2ab(str) {
@@ -57,5 +58,37 @@ export class Util {
         }
 
         return out;
+    }
+
+    static restAPI(account,key,keyName,method,path,header,body,success,fail) {
+        var sasToken = this.getSASToken(account,key,keyName);
+        var url = 'https://iothub-rest-api.azurewebsites.net/' + account + path;
+        if (typeof header === 'function') {
+            success = header;
+            fail = body;
+            header = {};
+            body = null;
+        } else if (typeof body === 'function') {
+            fail = success;
+            success = body;
+            body = null;
+        } else if (typeof header === 'string') {
+            fail = success
+            success = body;
+            body = header;
+            header = {};
+        }
+
+        header = header || {};
+        header.Authorization = sasToken;
+
+        fail = fail || function(){};
+
+        jQuery.ajax({
+            url: url,
+            type: method,
+            header: header,
+            data: body
+        }).done(success).fail(fail);
     }
 }
