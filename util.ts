@@ -62,6 +62,12 @@ export class Util {
 
     static restAPI(account,key,keyName,method,path,header,body,success,fail) {
         var sasToken = this.getSASToken(account,key,keyName);
+        var apiVersionString = 'api-version=2016-11-14';
+        if(path.indexOf('?') !== -1) {
+            path += ('&'+apiVersionString);
+        }else {
+            path += ('?'+apiVersionString);
+        }
         var url = 'https://iothub-rest-api.azurewebsites.net/' + account + path;
         if (typeof header === 'function') {
             success = header;
@@ -87,7 +93,7 @@ export class Util {
         jQuery.ajax({
             url: url,
             type: method,
-            header: header,
+            headers: header,
             data: body
         }).done(success).fail(fail);
     }

@@ -25,11 +25,10 @@ export class Transport {
     public onMessage: Function;
     public onReadyToSend: Function;
     public onReadyToReceive: Function;
-    public onIHConnectionClose: Function;
-    public onEHConnectionClose: Function;
+    public onConnectionCloseIH: Function;
+    public onConnectionCloseEH: Function;
     public ehTopics: Array<string>;
     public ihTopic: string;
-    public createSuccess: boolean;
 
     private managementSender: any;
     private messageSender: any;
@@ -41,8 +40,7 @@ export class Transport {
         var matches = RegExp('HostName=(.*)\\.azure-devices\\.net;SharedAccessKeyName=(.*);SharedAccessKey=(.*)').exec(iotHubConnectionString);
         if(!matches || !matches[1]|| !matches[2]|| !matches[3]) {
             alert('invalid iot hub connection string');
-            this.createSuccess = false;
-            return;
+            return false;
         }
         
         this.iHAccount = matches[1];
@@ -71,28 +69,25 @@ export class Transport {
         this.ihTopic = '/messages/devicebound';
         var Container = window.require('rhea');
         this.clientIH = new Container();
-        this.createSuccess = true;
         this.initializedIH = true;
+        return true;
     }
 
     public initializeEH(eventHubEndPoint: string,eventHubName: string,eventHubConsumerGroup: string, messageTimeOffset: number = 0) {
         var matches = RegExp('sb://(.*)/').exec(eventHubEndPoint);
         if(!matches || !matches[1]) {
             alert('invalid event hub endpoint');
-            this.createSuccess = false;
-            return;
+            return false;
         }
         this.ehHost = matches[1];
         
         if(!eventHubName) {
             alert('invalid event hub name');
-            this.createSuccess = false;
-            return;
+            return false;
         }
         if(!eventHubConsumerGroup) {
             alert('invalid event hub consumer group');
-            this.createSuccess = false;
-            return;
+            return false;
         }
 
         this.optionsEH = {
@@ -121,8 +116,8 @@ export class Transport {
         this.ehTopics = new Array();
         var Container = window.require('rhea');
         this.clientEH = new Container();
-        this.createSuccess = true;
         this.initializedEH = true;
+        return true;
     }
 
     public connectIH(success: Function, fail: Function) {
@@ -142,7 +137,7 @@ export class Transport {
             if(fail) fail();
         });
         this.clientIH.on('connection_close',(context) => {
-            if(this.onIHConnectionClose) this.onIHConnectionClose();
+            if(this.onConnectionCloseIH) this.onConnectionCloseIH();
         });
         this.clientIH.on('sendable', (context) => {
             this.sendable = true;
@@ -173,7 +168,7 @@ export class Transport {
             if(fail) fail();
         });
         this.clientEH.on('connection_close',(context) => {
-            if(this.onEHConnectionClose) this.onEHConnectionClose();
+            if(this.onConnectionCloseEH) this.onConnectionCloseEH();
         });
         this.clientEH.on('sendable', (context) => {
             console.log('on sendable!!!');
@@ -230,5 +225,42 @@ export class Transport {
             return false;
         }
         this.messageSender.send({to:'/devices/'+deviceId+this.ihTopic,body:this.clientIH.message.data_section(Util.str2ab(payload))});
+    }
+
+    public updateDesired(deviceId: string,payload: string,success: Function,fail: Function) {
+        if(!this.initializeIH) {
+            alert('iot hub not initialized');
+            fail();
+            return;
+        }
+        var jsonPayload = {
+            properties: {
+                desired: JSON.parse(payload)
+            }
+        }
+        Util.restAPI(this.iHAccount,this.sharedAccessKey,this.sharedAccessKeyName,'PATCH','/twins/'+deviceId,{'Content-Type': 'application/json'},JSON.stringify(jsonPayload),success,fail);
+    }
+
+    public getTwin(deviceId: string,success: Function,fail: Function) {
+        if(!this.initializeIH) {
+            alert('iot hub not initialized');
+            fail();
+            return;
+        }
+        Util.restAPI(this.iHAccount,this.sharedAccessKey,this.sharedAccessKeyName,'GET','/twins/'+deviceId,null,null,success,fail);
+    }
+
+    public callMethod(deviceId: string,methodName: string,methodPayload: string,timeout: number,success: Function,fail: Function) {
+        if(!this.initializeIH) {
+            alert('iot hub not initialized');
+            fail();
+            return;
+        }
+        var jsonPayload = {
+            methodName:methodName,
+            payload:methodPayload,
+            timeoutInSeconds:timeout,
+        }
+        Util.restAPI(this.iHAccount,this.sharedAccessKey,this.sharedAccessKeyName,'POST','/twins/'+deviceId+'/methods',{'Content-Type': 'application/json'},JSON.stringify(jsonPayload),success,fail);
     }
 }
