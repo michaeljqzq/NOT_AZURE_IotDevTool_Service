@@ -36,7 +36,7 @@ export class Transport {
     private optionsEH: any;
     private optionsIH: any;
 
-    public initializeIH(iotHubConnectionString: string) {
+    public initializeIH(iotHubConnectionString: string, ehCG: string) {
         var matches = RegExp('HostName=(.*)\\.azure-devices\\.net;SharedAccessKeyName=(.*);SharedAccessKey=(.*)').exec(iotHubConnectionString);
         if(!matches || !matches[1]|| !matches[2]|| !matches[3]) {
             alert('invalid iot hub connection string');
@@ -70,6 +70,7 @@ export class Transport {
         var Container = window.require('rhea');
         this.clientIH = new Container();
         this.initializedIH = true;
+        this.ehCG = ehCG;
         return true;
     }
 
@@ -128,10 +129,8 @@ export class Transport {
         var wsIH = this.clientIH.websocket_connect(WebSocket);
         this.optionsIH.connection_details = wsIH("wss://" + this.iHAccount + ".azure-devices.net:443/$servicebus/websocket?iothub-no-client-cert=true", ["AMQPWSB10"]);
         this.clientIH.on('connection_open',(context) => {
-            if(success) {
-                success();
-            } 
             this.messageSender = this.connectionIH.open_sender(this.ihTopic);
+            this.connectionIH.open_receiver('messages/events/');
         });
         this.clientIH.on('connection_error',(context) => {
             if(fail) fail();
@@ -145,6 +144,16 @@ export class Transport {
         });
         this.clientIH.on("message", (context) => {
             console.log('onmessage called should not use!!');
+        });
+        this.clientIH.on("error", (context) => {
+            // Use error handle to catch event hub infos
+            if(context.condition === 'amqp:link:redirect' && context.link.error.info) {
+                this.initializeEH('sb://'+ context.link.error.info.hostname +'/',
+                    new RegExp('5671/(.*)/').exec(context.link.error.info.address)[1],
+                    this.ehCG
+                )
+                this.connectEH(success,fail);
+            }
         });
         this.connectionIH = this.clientIH.connect(this.optionsIH);
     }
